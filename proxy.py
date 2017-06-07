@@ -114,9 +114,9 @@ def json_save(filename, obj):
         json.dump(obj, handle)
 
 
-def file_save(filename, contents):
+def file_save(filename, file_contents):
     with open(filename, "wb") as handle:
-        handle.write(contents)
+        handle.write(file_contents)
 
 
 class ProxyBackend(object):
@@ -149,7 +149,11 @@ class ProxyBackend(object):
         return None
 
     def save_url(self, url, response):
-        """:type response: tornado.web.Response"""
+        """
+        Save URL result into the cache
+        :type url: str
+        :type response: tornado.web.Response
+        """
 
         error = response.error
         if error is not None:
@@ -181,7 +185,7 @@ class ProxyHandler(tornado.web.RequestHandler):
     SUPPORTED_METHODS = ['GET', 'POST', 'CONNECT']
 
     def compute_etag(self):
-        return None # disable tornado Etag
+        return None  # disable tornado Etag
 
     @tornado.web.asynchronous
     def get(self):
