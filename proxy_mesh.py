@@ -13,6 +13,7 @@ from utils import get_ip
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--port", "-p", type=int, help="TCP port to listen on", default=8000)
+    parser.add_argument("--proxy-dir", help="A place to put the proxy data")
 
     return parser.parse_args()
 
@@ -35,7 +36,7 @@ def main():
     try:
 
         print "Starting HTTP proxy on port %d" % port
-        run_proxy(port)
+        run_proxy(options.proxy_dir, port)
 
     finally:
         ad.cancel_our_ads()
@@ -62,12 +63,12 @@ class Advertisement(object):
             self.zc.unregister_service(info)
 
 
-def run_proxy(port_val, start_ioloop=True):
+def run_proxy(proxy_dir, port_val, start_ioloop=True):
     """
     Run proxy on the specified port. If start_ioloop is True (default),
     the tornado IOLoop will be started immediately.
     """
-    init_proxy_backend()
+    init_proxy_backend(proxy_dir)
     app = tornado.web.Application([
         # routes
         (r"/mesh-request/(.+)", MeshRequestHandler),

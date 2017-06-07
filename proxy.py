@@ -120,8 +120,10 @@ def file_save(filename, file_contents):
 
 
 class ProxyBackend(object):
-    def __init__(self):
-        self.proxy_dir = os.path.join(get_local_home(), "proxy_mesh")
+    def __init__(self, proxy_dir):
+        if proxy_dir is None:
+            proxy_dir = os.path.join(get_local_home(), "proxy_mesh")
+        self.proxy_dir = proxy_dir
         print "using proxy dir %s" % self.proxy_dir
         if not os.path.exists(self.proxy_dir):
             os.mkdir(self.proxy_dir)
@@ -175,10 +177,10 @@ _proxy_backend = None
 """:type: ProxyBackend"""
 
 
-def init_proxy_backend():
+def init_proxy_backend(proxy_dir):
     global _proxy_backend
     assert _proxy_backend is None
-    _proxy_backend = ProxyBackend()
+    _proxy_backend = ProxyBackend(proxy_dir)
 
 
 class ProxyHandler(tornado.web.RequestHandler):
