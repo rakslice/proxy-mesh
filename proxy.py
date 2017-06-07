@@ -156,21 +156,27 @@ class ProxyBackend(object):
         :type url: str
         :type response: tornado.web.Response
         """
-
         error = response.error
         if error is not None:
             error = error.args
 
-        metadata = {"code": response.code,
+        handle = self.save_url_handle(url, response.code, error, response.reason, response.headers)
+        try:
+            handle.write(response.body)
+        finally:
+            handle.close()
+
+    def save_url_handle(self, url, code, error, reason, headers):
+        metadata = {"code": code,
                     "error": error,
-                    "headers": list(response.headers.get_all()),
-                    "reason": response.reason
+                    "headers": list(headers.get_all()),
+                    "reason": reason
                     }
         local_dir = self.get_cache_dir(url)
         if not os.path.isdir(local_dir):
             os.makedirs(local_dir)
         json_save(os.path.join(local_dir, "meta.json"), metadata)
-        file_save(os.path.join(local_dir, "body"), response.body)
+        return open(os.path.join(local_dir, "body"), "wb")
 
 
 _proxy_backend = None
@@ -183,6 +189,39 @@ def init_proxy_backend(proxy_dir):
     _proxy_backend = ProxyBackend(proxy_dir)
 
 
+class ParseHelper(object):
+    def __init__(self, on_headers_done):
+        self.headers = None
+        self.response_start_line = None
+        self.header_lines = []
+        self.on_headers_done = on_headers_done
+        self.code = None
+        self.reason = None
+        self.write_handle = None
+        self.error = None
+
+    def handle_header_line(self, line):
+        if len(self.header_lines) >= 1 and line == "\r\n":
+            # headers done, toss them
+            self.response_start_line = tornado.httputil.parse_response_start_line(self.header_lines[0])
+
+            self.code = self.response_start_line.code
+            self.reason = self.response_start_line.reason
+
+            if 400 <= self.code < 600:
+                self.error = tornado.web.HTTPError(self.code, reason=self.reason)
+
+            self.headers = tornado.httputil.HTTPHeaders.parse("".join(self.header_lines[1:]))
+            if self.on_headers_done is not None:
+                self.on_headers_done()
+        else:
+            self.header_lines.append(line)
+
+    def handle_data_chunk(self, data):
+        if self.write_handle is not None:
+            self.write_handle.write(data)
+
+
 class ProxyHandler(tornado.web.RequestHandler):
     SUPPORTED_METHODS = ['GET', 'POST', 'CONNECT']
 
@@ -193,19 +232,48 @@ class ProxyHandler(tornado.web.RequestHandler):
     def get(self):
         print 'Handle %s request to %s' % (self.request.method, self.request.uri)
 
+        def handle_headers_done():
+            if self.request.method == "GET" and self.request.body == "" and 200 <= parse_helper.code < 300:
+                print "Saving stream %s %s %s" % (self.request.method, parse_helper.code, self.request.uri)
+                parse_helper.write_handle = _proxy_backend.save_url_handle(self.request.uri, parse_helper.code, parse_helper.error, parse_helper.reason, parse_helper.headers)
+            else:
+                print "Skipping saving stream %s %s %s" % (self.request.method, parse_helper.code, self.request.uri)
+
+            self.set_status(parse_helper.code, parse_helper.reason)
+            self._headers = tornado.httputil.HTTPHeaders()  # clear tornado default header
+
+            for header, v in parse_helper.headers.get_all():
+                if header not in ('Content-Length', 'Transfer-Encoding', 'Content-Encoding', 'Connection'):
+                    self.add_header(header, v) # some header appear multiple times, eg 'Set-Cookie'
+
+            # if response.body:
+            #     self.set_header('Content-Length', len(response.body))
+            #     self.write(response.body)
+
+        parse_helper = ParseHelper(handle_headers_done)
+
+        def handle_data_chunk(data):
+            self.write(data)
+            self.flush()
+            parse_helper.handle_data_chunk(data)
+
         def handle_response(response, loaded=False):
             if not loaded:
-                if self.request.method == "GET" and self.request.body == "" and 200 <= response.code < 300:
-                    print "Saving %s %s %s" % (self.request.method, response.code, self.request.uri)
-                    _proxy_backend.save_url(self.request.uri, response)
-                else:
-                    print "Skipping saving %s %s %s" % (self.request.method, response.code, self.request.uri)
+                # if self.request.method == "GET" and self.request.body == "" and 200 <= response.code < 300:
+                #     print "Saving %s %s %s" % (self.request.method, response.code, self.request.uri)
+                #     _proxy_backend.save_url(self.request.uri, response)
+                # else:
+                #     print "Skipping saving %s %s %s" % (self.request.method, response.code, self.request.uri)
+
+                if parse_helper.write_handle is not None:
+                    parse_helper.write_handle.close()
+                    parse_helper.write_handle = None
             if response.error and not isinstance(response.error, tornado.httpclient.HTTPError):
                 self.set_status(500)
                 self.write('Internal server error:\n' + str(response.error))
-            else:
+            elif not loaded:
                 self.set_status(response.code, response.reason)
-                self._headers = tornado.httputil.HTTPHeaders() # clear tornado default header
+                self._headers = tornado.httputil.HTTPHeaders()  # clear tornado default header
 
                 for header, v in response.headers.get_all():
                     if header not in ('Content-Length', 'Transfer-Encoding', 'Content-Encoding', 'Connection'):
@@ -234,7 +302,9 @@ class ProxyHandler(tornado.web.RequestHandler):
                 self.request.uri, handle_response,
                 method=self.request.method, body=body,
                 headers=self.request.headers, follow_redirects=False,
-                allow_nonstandard_methods=True)
+                allow_nonstandard_methods=True,
+                streaming_callback=handle_data_chunk,
+                header_callback=parse_helper.handle_header_line)
         except tornado.httpclient.HTTPError as e:
             if hasattr(e, 'response') and e.response:
                 handle_response(e.response)
