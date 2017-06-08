@@ -30,7 +30,8 @@ class MeshRequestHandler(tornado.web.RequestHandler):
         backend = get_proxy_backend()
         entries, next_key = backend.list_entries(self.PAGE_LIMIT, next_key)
 
-        self.add_header("Content-type", "application/json")
+        self.set_header("Content-type", "application/json")
+
         self.finish(json.dumps({"entries": entries, "next_key": next_key}))
 
 
