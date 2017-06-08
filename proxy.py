@@ -283,16 +283,21 @@ class ProxyBackend(object):
         return open(os.path.join(local_dir, "body"), "wb")
 
     def download_remote_service_entry(self, ip, port, url, done_callback):
+        proxy_prefix = "http://%s:%d/" % (ip, port)
+
         def download_complete(response):
             assert isinstance(response, tornado.httpclient.HTTPResponse)
             assert 200 <= response.code < 300, "Proxy download got code %d" % response.code
-            self.save_url(url, response)
+            assert url.startswith(proxy_prefix)
+            self.save_url(url[len(proxy_prefix):], response)
             done_callback()
 
         headers = tornado.httputil.HTTPHeaders()
         headers.add("Cache-only", "true")
         print "SYNC DOWNLOAD %s from proxy %s:%d" % (url, ip, port)
-        fetch_request(url, download_complete, proxy_host=ip, proxy_port=port, headers=headers)
+
+        fetch_request(proxy_prefix + url, download_complete, proxy_host=ip, proxy_port=port, headers=headers)
+        # fetch_request(url, download_complete, proxy_host=ip, proxy_port=port, headers=headers)
 
     def download_entries(self, ip, port, entries, cur_index, done_callback):
         while cur_index < len(entries):
@@ -514,7 +519,10 @@ class ProxyHandler(tornado.web.RequestHandler):
                 should_check_cache = False
 
             if should_check_cache:
-                cache_response = _proxy_backend.get_url(self.request.uri)
+                cache_lookup_uri = self.request.uri
+                if cache_only and cache_lookup_uri.startswith("/"):
+                    cache_lookup_uri = cache_lookup_uri[1:]
+                cache_response = _proxy_backend.get_url(cache_lookup_uri)
 
                 # NB we prefer INM to IMS as suggested by RFC 7232
                 # https://stackoverflow.com/a/35169178/60422
