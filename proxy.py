@@ -27,6 +27,7 @@
 # LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 # THE SOFTWARE.
+import hashlib
 import json
 import logging
 import os
@@ -57,7 +58,7 @@ def parse_proxy(proxy):
     return proxy_parsed.hostname, proxy_parsed.port
 
 
-def fetch_request(url, callback, **kwargs):
+def fetch_request(url, callback, cache_response=None, **kwargs):
     proxy = get_proxy(url)
     if proxy:
         logger.debug('Forward request via upstream proxy %s', proxy)
@@ -107,6 +108,18 @@ class FakeHeaders(object):
 
     def get_all(self):
         return self.headers
+
+    def __getitem__(self, key):
+        for cur_key, value in self.headers:
+            if key.lower() == cur_key.lower():
+                return value
+        raise KeyError("Unknown key " + key)
+
+    def __contains__(self, key):
+        for cur_key, _ in self.headers:
+            if cur_key.lower() == key.lower():
+                return True
+        return False
 
 
 def json_save(filename, obj):
@@ -190,7 +203,7 @@ def init_proxy_backend(proxy_dir):
 
 
 class ParseHelper(object):
-    def __init__(self, on_headers_done):
+    def __init__(self, on_headers_done, debug_sizes=False):
         self.headers = None
         self.response_start_line = None
         self.header_lines = []
@@ -199,6 +212,9 @@ class ParseHelper(object):
         self.reason = None
         self.write_handle = None
         self.error = None
+        self.body_size = 0
+        self.debug_sizes = debug_sizes
+        self.response_handled = False
 
     def handle_header_line(self, line):
         if len(self.header_lines) >= 1 and line == "\r\n":
@@ -218,8 +234,17 @@ class ParseHelper(object):
             self.header_lines.append(line)
 
     def handle_data_chunk(self, data):
+        if self.debug_sizes:
+            print "chunk offset %d is len %d chunk sha1 %s" % (self.body_size, len(data), calc_sha1(data))
         if self.write_handle is not None:
             self.write_handle.write(data)
+        self.body_size += len(data)
+
+
+def calc_sha1(data):
+    s = hashlib.sha1()
+    s.update(data)
+    return s.hexdigest()
 
 
 class ProxyHandler(tornado.web.RequestHandler):
@@ -230,14 +255,22 @@ class ProxyHandler(tornado.web.RequestHandler):
 
     @tornado.web.asynchronous
     def get(self):
-        print 'Handle %s request to %s' % (self.request.method, self.request.uri)
+        print 'CLIENT REQUEST %s %s' % (self.request.method, self.request.uri)
 
         def handle_headers_done():
+            print "UPSTREAM RESPONSE %s %s %s %s" % (self.request.method, self.request.uri, parse_helper.code, parse_helper.reason)
             if self.request.method == "GET" and self.request.body == "" and 200 <= parse_helper.code < 300:
                 print "Saving stream %s %s %s" % (self.request.method, parse_helper.code, self.request.uri)
                 parse_helper.write_handle = _proxy_backend.save_url_handle(self.request.uri, parse_helper.code, parse_helper.error, parse_helper.reason, parse_helper.headers)
             else:
                 print "Skipping saving stream %s %s %s" % (self.request.method, parse_helper.code, self.request.uri)
+
+            if converted_request_to_conditional and parse_helper.code == 304:
+                # We converted a request to conditional and it checkout out
+                # so serve the original proxy response
+                print "Conditional request passed"
+                handle_response(cache_response, True)
+                return
 
             self.set_status(parse_helper.code, parse_helper.reason)
             self._headers = tornado.httputil.HTTPHeaders()  # clear tornado default header
@@ -250,7 +283,9 @@ class ProxyHandler(tornado.web.RequestHandler):
             #     self.set_header('Content-Length', len(response.body))
             #     self.write(response.body)
 
-        parse_helper = ParseHelper(handle_headers_done)
+        # debug_sizes = self.request.uri.endswith("/eb240536122cef2bc1bd30437180ce2fd4af02eaad2472884b72716d7eb12c2f")
+        debug_sizes = False
+        parse_helper = ParseHelper(handle_headers_done, debug_sizes=debug_sizes)
 
         def handle_data_chunk(data):
             self.write(data)
@@ -258,6 +293,9 @@ class ProxyHandler(tornado.web.RequestHandler):
             parse_helper.handle_data_chunk(data)
 
         def handle_response(response, loaded=False):
+            if parse_helper.response_handled:
+                return
+            parse_helper.response_handled = True
             if not loaded:
                 # if self.request.method == "GET" and self.request.body == "" and 200 <= response.code < 300:
                 #     print "Saving %s %s %s" % (self.request.method, response.code, self.request.uri)
@@ -271,7 +309,7 @@ class ProxyHandler(tornado.web.RequestHandler):
             if response.error and not isinstance(response.error, tornado.httpclient.HTTPError):
                 self.set_status(500)
                 self.write('Internal server error:\n' + str(response.error))
-            elif not loaded:
+            elif loaded:
                 self.set_status(response.code, response.reason)
                 self._headers = tornado.httputil.HTTPHeaders()  # clear tornado default header
 
@@ -282,18 +320,54 @@ class ProxyHandler(tornado.web.RequestHandler):
                 if response.body:
                     self.set_header('Content-Length', len(response.body))
                     self.write(response.body)
+            else:
+                assert not loaded
+                if "Content-Length" in response.headers:
+                    content_length = int(response.headers["Content-Length"])
+                    print "%s content-length %d" % (self.request.uri, content_length)
+                    if parse_helper.body_size != content_length:
+                        print "WARNING content length mismatch %d %d" % (parse_helper.body_size, content_length)
             self.finish()
 
         body = self.request.body
         if not body:
             body = None
 
+        cache_response = None
+        converted_request_to_conditional = False
+
         if self.request.method == "GET" and self.request.body == "":
-            proxy_response = _proxy_backend.get_url(self.request.uri)
-            if proxy_response is not None:
-                print "Using saved %s" % self.request.uri
-                handle_response(proxy_response, True)
-                return
+
+            should_check_cache = True
+
+            headers = self.request.headers
+            assert isinstance(headers, tornado.httputil.HTTPHeaders)
+            if "If-Modified-Since" in headers or "If-None-Match" in headers:
+                print "IMS", headers.get("If-Modified-Since"), "INM", headers.get("If-None-Match")
+                # always put these through since upstream could have a newer version
+                # we want and if it doesn't it is already doing data reduction
+                should_check_cache = False
+
+            if should_check_cache:
+                cache_response = _proxy_backend.get_url(self.request.uri)
+
+                # NB we prefer INM to IMS as suggested by RFC 7232
+                # https://stackoverflow.com/a/35169178/60422
+
+                if cache_response is not None:
+                    # print cache_response.headers.get_all()
+                    if "Etag" in cache_response.headers or "Last-Modified" in cache_response.headers:
+                        converted_request_to_conditional = True
+                        if "Etag" in cache_response.headers:
+                            # Make this an INM
+                            self.request.headers.add("If-None-Match", cache_response.headers["Etag"])
+                        if "Last-Modified" in cache_response.headers:
+                            # Make this an IMS
+                            self.request.headers.add("If-Modified-Since", cache_response.headers["Last-Modified"])
+                    else:
+                        print "Using saved %s" % self.request.uri
+                        handle_response(cache_response, True)
+                        return
 
         try:
             if 'Proxy-Connection' in self.request.headers:
@@ -304,7 +378,8 @@ class ProxyHandler(tornado.web.RequestHandler):
                 headers=self.request.headers, follow_redirects=False,
                 allow_nonstandard_methods=True,
                 streaming_callback=handle_data_chunk,
-                header_callback=parse_helper.handle_header_line)
+                header_callback=parse_helper.handle_header_line,
+                cache_response=cache_response)
         except tornado.httpclient.HTTPError as e:
             if hasattr(e, 'response') and e.response:
                 handle_response(e.response)
