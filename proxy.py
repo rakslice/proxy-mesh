@@ -285,7 +285,7 @@ class ProxyBackend(object):
     def download_remote_service_entry(self, ip, port, url):
         def download_complete(response):
             assert isinstance(response, tornado.httpclient.HTTPResponse)
-            assert 200 <= response.code < 300
+            assert 200 <= response.code < 300, "Proxy download got code %d" % response.code
             self.save_url(url, response)
 
         headers = tornado.httputil.HTTPHeaders()
