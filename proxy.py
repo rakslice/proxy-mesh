@@ -282,15 +282,27 @@ class ProxyBackend(object):
         self.update_metadata_entry(url, metadata)
         return open(os.path.join(local_dir, "body"), "wb")
 
-    def download_remote_service_entry(self, ip, port, url):
+    def download_remote_service_entry(self, ip, port, url, done_callback):
         def download_complete(response):
             assert isinstance(response, tornado.httpclient.HTTPResponse)
             assert 200 <= response.code < 300, "Proxy download got code %d" % response.code
             self.save_url(url, response)
+            done_callback()
 
         headers = tornado.httputil.HTTPHeaders()
         headers.add("Cache-only", "true")
         fetch_request(url, download_complete, proxy_host=ip, proxy_port=port, headers=headers)
+
+    def download_entries(self, ip, port, entries, cur_index, done_callback):
+        while cur_index < len(entries):
+            metadata_record = entries[cur_index]
+            url = metadata_record["url"]
+            last_modified_epoch = metadata_record["last_modified"]
+            if not self.check_existing_entry(url, last_modified_epoch):
+                self.download_remote_service_entry(ip, port, url, lambda: self.download_entries(ip, port, entries, cur_index + 1, done_callback))
+                return
+            cur_index += 1
+        done_callback()
 
     def sync_remote_service(self, ip, port):
         uri_format = "http://%s:%d/mesh-request"
@@ -313,16 +325,13 @@ class ProxyBackend(object):
             entries = response_obj["entries"]
             next_key = response_obj["next_key"]
 
-            for metadata_record in entries:
-                url = metadata_record["url"]
-                last_modified_epoch = metadata_record["last_modified"]
-                if not self.check_existing_entry(url, last_modified_epoch):
-                    self.download_remote_service_entry(ip, port, url)
+            def after_entries():
+                if next_key:
+                    next_page_uri = uri_format % (ip, port) + "?" + urllib.urlencode({"next_key": next_key})
 
-            if next_key:
-                next_page_uri = uri_format % (ip, port) + "?" + urllib.urlencode({"next_key": next_key})
+                    fetch_request(next_page_uri, handle_response)
 
-                fetch_request(next_page_uri, handle_response)
+            self.download_entries(ip, port, entries, 0, after_entries)
 
         uri = uri_format % (ip, port)
 
