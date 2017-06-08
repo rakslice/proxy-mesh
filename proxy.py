@@ -295,7 +295,7 @@ class ProxyBackend(object):
         headers.add("Cache-only", "true")
         print "SYNC DOWNLOAD %s from proxy %s:%d" % (url, ip, port)
 
-        fetch_request(proxy_prefix + url, download_complete, proxy_host=ip, proxy_port=port, headers=headers)
+        fetch_request(proxy_prefix + url, download_complete, headers=headers)
         # fetch_request(url, download_complete, proxy_host=ip, proxy_port=port, headers=headers)
 
     def download_entries(self, ip, port, entries, cur_index, done_callback):
