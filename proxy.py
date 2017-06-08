@@ -293,7 +293,7 @@ class ProxyBackend(object):
         fetch_request(url, download_complete, proxy_host=ip, proxy_port=port, headers=headers)
 
     def sync_remote_service(self, ip, port):
-        uri_format = "http://%s:%d/mesh-request/"
+        uri_format = "http://%s:%d/mesh-request"
 
         def handle_response(response):
             """

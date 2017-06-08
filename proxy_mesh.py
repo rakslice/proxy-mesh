@@ -24,7 +24,7 @@ class MeshRequestHandler(tornado.web.RequestHandler):
 
     PAGE_LIMIT = 26
 
-    def get(self, slug):
+    def get(self):
         next_key = self.get_argument("next_key", None)
 
         backend = get_proxy_backend()
@@ -126,7 +126,7 @@ def run_proxy(proxy_dir, port_val, start_ioloop=True, rebuild_db=False):
 
     app = tornado.web.Application([
         # routes
-        (r"/mesh-request/(.+)", MeshRequestHandler),
+        (r"/mesh-request", MeshRequestHandler),
         (r'.*', MeshProxyHandler),
     ])
     app.listen(port_val)
