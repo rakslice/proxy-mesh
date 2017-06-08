@@ -333,11 +333,11 @@ def init_proxy_backend(proxy_dir, rebuild_db):
     global _proxy_backend
     assert _proxy_backend is None
     _proxy_backend = ProxyBackend(proxy_dir, rebuild_db)
+    return _proxy_backend
 
 
 def get_proxy_backend():
     """:rtype: ProxyBackend"""
-    assert _proxy_backend is not None
     return _proxy_backend
 
 

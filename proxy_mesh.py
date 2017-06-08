@@ -91,7 +91,11 @@ class Advertisement(object):
 
     def on_remote_service_added(self, ip, port):
         backend = get_proxy_backend()
-        backend.sync_remote_service(ip, port)
+        if backend is None:
+            print "deferring sync with proxy %s:%d until we are started" % (ip, port)
+            deferred_remote_service_inits.append((ip, port))
+        else:
+            backend.sync_remote_service(ip, port)
 
     def cancel_our_ads(self):
         infos = self.info_entries
@@ -105,12 +109,21 @@ class MeshProxyHandler(ProxyHandler):
         super(MeshProxyHandler, self).__init__(*args, **kwargs)
 
 
+deferred_remote_service_inits = []
+
+
 def run_proxy(proxy_dir, port_val, start_ioloop=True, rebuild_db=False):
     """
     Run proxy on the specified port. If start_ioloop is True (default),
     the tornado IOLoop will be started immediately.
     """
-    init_proxy_backend(proxy_dir, rebuild_db)
+    backend = init_proxy_backend(proxy_dir, rebuild_db)
+
+    remotes = list(deferred_remote_service_inits)
+    deferred_remote_service_inits[:] = []
+    for ip, port in remotes:
+        backend.sync_remote_service(ip, port)
+
     app = tornado.web.Application([
         # routes
         (r"/mesh-request/(.+)", MeshRequestHandler),
