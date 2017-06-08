@@ -215,7 +215,7 @@ class ProxyBackend(object):
             c = self.cache_db_conn.cursor()
             try:
                 c.execute("select 1 from cache_entries where url = ? and last_modified >= ?", (url, last_modified_epoch))
-                return c.rowcount > 0
+                return len(c.fetchall()) > 0
             finally:
                 c.close()
 
