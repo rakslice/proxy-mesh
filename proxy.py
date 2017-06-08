@@ -320,7 +320,7 @@ class ProxyBackend(object):
                     self.download_remote_service_entry(ip, port, url)
 
             if next_key:
-                next_page_uri = uri_format % (ip, port) + "?next_key=%s" % urllib.urlencode(next_key)
+                next_page_uri = uri_format % (ip, port) + "?" + urllib.urlencode({"next_key": next_key})
 
                 fetch_request(next_page_uri, handle_response)
 
