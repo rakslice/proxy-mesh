@@ -165,24 +165,30 @@ class ProxyBackend(object):
         if not os.path.exists(self.proxy_dir):
             os.mkdir(self.proxy_dir)
 
+    def update_metadata_entry(self, url, metadata, metadata_json=None):
+        if metadata_json is None:
+            metadata_json = json.dumps(metadata_json)
+        last_modified_epoch = None
+        for key, value in metadata["headers"]:
+            if key.lower() == "last-modified":
+                last_modified_epoch = rfc822.mktime_tz(rfc822.parsedate_tz(value))
+                break
+
+        with self.cache_db_conn:
+            c = self.cache_db_conn.cursor()
+            c.execute("""insert or replace into cache_entries (url, last_modified, json) values (?, ?, ?)""", (url, last_modified_epoch, metadata_json))
+
     def rebuild_db(self):
         for dirpath, dirnames, filenames in os.walk(self.proxy_dir):
             if META_JSON in filenames:
                 metadata_json = contents(os.path.join(dirpath, META_JSON))
                 metadata = json.loads(metadata_json)
 
-                last_modified_epoch = None
-                for key, value in metadata["headers"]:
-                    if key.lower() == "last-modified":
-                        last_modified_epoch = rfc822.mktime_tz(rfc822.parsedate_tz(value))
-                        break
                 rel = os.path.relpath(dirpath, self.proxy_dir)
                 parts = rel.split(os.sep)
                 url = "http://" + "/".join(parts)
 
-                with self.cache_db_conn:
-                    c = self.cache_db_conn.cursor()
-                    c.execute("""insert into cache_entries (url, last_modified, json) values (?, ?, ?)""", (url, last_modified_epoch, metadata_json))
+                self.update_metadata_entry(url, metadata, metadata_json)
 
     def get_cache_dir(self, url):
         for prefix in ["http://", "https://"]:
@@ -231,7 +237,8 @@ class ProxyBackend(object):
         local_dir = self.get_cache_dir(url)
         if not os.path.isdir(local_dir):
             os.makedirs(local_dir)
-        json_save(os.path.join(local_dir, "meta.json"), metadata)
+        json_save(os.path.join(local_dir, META_JSON), metadata)
+        self.update_metadata_entry(url, metadata)
         return open(os.path.join(local_dir, "body"), "wb")
 
 
