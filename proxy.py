@@ -283,7 +283,14 @@ class ProxyBackend(object):
         return open(os.path.join(local_dir, "body"), "wb")
 
     def download_remote_service_entry(self, ip, port, url):
-        pass
+        def download_complete(response):
+            assert isinstance(response, tornado.httpclient.HTTPResponse)
+            assert 200 <= response.code < 300
+            self.save_url(url, response)
+
+        headers = tornado.httputil.HTTPHeaders()
+        headers.add("Cache-only", "true")
+        fetch_request(url, download_complete, proxy_host=ip, proxy_port=port, headers=headers)
 
     def sync_remote_service(self, ip, port):
         uri_format = "http://%s:%d/mesh-request/"
@@ -474,7 +481,11 @@ class ProxyHandler(tornado.web.RequestHandler):
 
             headers = self.request.headers
             assert isinstance(headers, tornado.httputil.HTTPHeaders)
+
+            cache_only = "Cache-only" in headers
+
             if "If-Modified-Since" in headers or "If-None-Match" in headers:
+                assert not cache_only
                 print "IMS", headers.get("If-Modified-Since"), "INM", headers.get("If-None-Match")
                 # always put these through since upstream could have a newer version
                 # we want and if it doesn't it is already doing data reduction
@@ -488,7 +499,8 @@ class ProxyHandler(tornado.web.RequestHandler):
 
                 if cache_response is not None:
                     # print cache_response.headers.get_all()
-                    if "Etag" in cache_response.headers or "Last-Modified" in cache_response.headers:
+
+                    if ("Etag" in cache_response.headers or "Last-Modified" in cache_response.headers) and not cache_only:
                         converted_request_to_conditional = True
                         if "Etag" in cache_response.headers:
                             # Make this an INM
@@ -500,6 +512,8 @@ class ProxyHandler(tornado.web.RequestHandler):
                         print "Using saved %s" % self.request.uri
                         handle_response(cache_response, True)
                         return
+                else:
+                    assert not cache_only
 
         try:
             if 'Proxy-Connection' in self.request.headers:
