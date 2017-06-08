@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 #
 # From https://github.com/senko/tornado-proxy/blob/master/tornado_proxy/proxy.py
-# with minor alterations
+# with heavy modifications
 #
 # Simple asynchronous HTTP proxy with tunnelling (CONNECT).
 #
@@ -34,6 +34,7 @@ import os
 import rfc822
 import sys
 import socket
+import urllib
 from urlparse import urlparse
 
 import sqlite3
@@ -62,7 +63,7 @@ def parse_proxy(proxy):
     return proxy_parsed.hostname, proxy_parsed.port
 
 
-def fetch_request(url, callback, cache_response=None, **kwargs):
+def fetch_request(url, callback, **kwargs):
     proxy = get_proxy(url)
     if proxy:
         logger.debug('Forward request via upstream proxy %s', proxy)
@@ -151,12 +152,12 @@ class ProxyBackend(object):
         create_table_sql = """CREATE TABLE IF NOT EXISTS cache_entries
             (url TEXT PRIMARY KEY ASC, last_modified INTEGER, json TEXT NOT NULL)
         """
-        c = self.cache_db_conn.cursor()
-        c.execute(create_table_sql)
-
         create_timestamp_index_sql = """CREATE INDEX IF NOT EXISTS cache_entries_last_modified ON cache_entries (last_modified)"""
-        c.execute(create_timestamp_index_sql)
-        self.cache_db_conn.commit()
+
+        conn = self.cache_db_conn
+        with conn:
+            conn.execute(create_table_sql)
+            conn.execute(create_timestamp_index_sql)
 
         if rebuild_db:
             self.rebuild_db()
@@ -175,8 +176,48 @@ class ProxyBackend(object):
                 break
 
         with self.cache_db_conn:
+            self.cache_db_conn.execute("""insert or replace into cache_entries (url, last_modified, json) values (?, ?, ?)""", (url, last_modified_epoch, metadata_json))
+
+    INITIAL_LIST_SQL = """SELECT (url, last_modified) FROM cache_entries ORDER BY url LIMIT ?"""
+    SUBSEQUENT_LIST_SQL = """SELECT (url, last_modified) FROM cache_entries WHERE url >= ? ORDER BY url LIMIT ?"""
+
+    def list_entries(self, count, next_key=None):
+        """
+        :type count: int
+        :type next_key: str or None
+        :rtype: (list of {'url': str, 'last_modified': int}, str or None)
+        """
+        with self.cache_db_conn:
             c = self.cache_db_conn.cursor()
-            c.execute("""insert or replace into cache_entries (url, last_modified, json) values (?, ?, ?)""", (url, last_modified_epoch, metadata_json))
+            try:
+                if next_key is None:
+                    c.execute(self.INITIAL_LIST_SQL, (count + 1,))
+                else:
+                    c.execute(self.SUBSEQUENT_LIST_SQL, (next_key, count + 1))
+
+                out = []
+                rows = c.fetchall()
+                for url, last_modified in rows[:count]:
+                    out.append({"url": url, "last_modified": last_modified})
+
+                if len(rows) > count:
+                    new_next_key, _ = rows[:-1]
+                else:
+                    new_next_key = None
+            finally:
+                c.close()
+
+            return out, new_next_key
+
+    def check_existing_entry(self, url, last_modified_epoch):
+        """Check if we have an the same as or newer than the given details; return True if so and False if not"""
+        with self.cache_db_conn:
+            c = self.cache_db_conn.cursor()
+            try:
+                c.execute("select 1 from cache_entries where url = ? and last_modified >= ?", (url, last_modified_epoch))
+                return c.rowcount > 0
+            finally:
+                c.close()
 
     def rebuild_db(self):
         for dirpath, dirnames, filenames in os.walk(self.proxy_dir):
@@ -241,6 +282,41 @@ class ProxyBackend(object):
         self.update_metadata_entry(url, metadata)
         return open(os.path.join(local_dir, "body"), "wb")
 
+    def download_remote_service_entry(self, ip, port, url):
+        pass
+
+    def sync_remote_service(self, ip, port):
+        uri_format = "http://%s:%d/mesh-request/"
+
+        def handle_response(response):
+            """
+            :type response: tornado.httpclient.HTTPResponse
+           """
+            assert isinstance(response, tornado.httpclient.HTTPResponse)
+
+            assert response.headers["Content-type"] == "application/json"
+            response_obj = json.loads(response.body)
+
+            entries = response_obj["entries"]
+            next_key = response_obj["next_key"]
+
+            for metadata_record in entries:
+                url = metadata_record["url"]
+                last_modified_epoch = metadata_record["last_modified"]
+                if not self.check_existing_entry(url, last_modified_epoch):
+                    self.download_remote_service_entry(ip, port, url)
+
+            if next_key:
+                next_page_uri = uri_format % (ip, port) + "?next_key=%s" % urllib.urlencode(next_key)
+
+                fetch_request(next_page_uri, handle_response)
+
+        uri = uri_format % (ip, port, 0)
+
+        fetch_request(
+            uri, handle_response,
+            method="GET")
+
 
 _proxy_backend = None
 """:type: ProxyBackend"""
@@ -250,6 +326,12 @@ def init_proxy_backend(proxy_dir, rebuild_db):
     global _proxy_backend
     assert _proxy_backend is None
     _proxy_backend = ProxyBackend(proxy_dir, rebuild_db)
+
+
+def get_proxy_backend():
+    """:rtype: ProxyBackend"""
+    assert _proxy_backend is not None
+    return _proxy_backend
 
 
 class ParseHelper(object):
@@ -428,8 +510,7 @@ class ProxyHandler(tornado.web.RequestHandler):
                 headers=self.request.headers, follow_redirects=False,
                 allow_nonstandard_methods=True,
                 streaming_callback=handle_data_chunk,
-                header_callback=parse_helper.handle_header_line,
-                cache_response=cache_response)
+                header_callback=parse_helper.handle_header_line)
         except tornado.httpclient.HTTPError as e:
             if hasattr(e, 'response') and e.response:
                 handle_response(e.response)
