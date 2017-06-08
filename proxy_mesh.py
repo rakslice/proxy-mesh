@@ -71,11 +71,12 @@ class Advertisement(object):
             self.zc = None
 
     def advertise_proxy(self, service_type, ip, port):
-        name = "Bonk._apt_proxy._tcp.local."
+        friendly_name = "proxy-mesh on " + socket.gethostname()
+        name = friendly_name + "._apt_proxy._tcp.local."
         print "zeroconf service type name " + zeroconf.service_type_name(name)
         desc = {}
         self.our_ip = socket.inet_aton(ip)
-        info = zeroconf.ServiceInfo(service_type, name, self.our_ip, port, 0, 0, desc, "Bonk.local.")
+        info = zeroconf.ServiceInfo(service_type, name, self.our_ip, port, 0, 0, desc, friendly_name + ".local.")
         self.zc.register_service(info)
         self.info_entries.append(info)
 
