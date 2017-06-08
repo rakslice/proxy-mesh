@@ -318,7 +318,7 @@ class ProxyBackend(object):
 
                 fetch_request(next_page_uri, handle_response)
 
-        uri = uri_format % (ip, port, 0)
+        uri = uri_format % (ip, port)
 
         fetch_request(
             uri, handle_response,
