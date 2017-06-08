@@ -201,7 +201,7 @@ class ProxyBackend(object):
                     out.append({"url": url, "last_modified": last_modified})
 
                 if len(rows) > count:
-                    new_next_key, _ = rows[:-1]
+                    new_next_key, _ = rows[-1]
                 else:
                     new_next_key = None
             finally:
