@@ -154,7 +154,7 @@ class ProxyBackend(object):
         c = self.cache_db_conn.cursor()
         c.execute(create_table_sql)
 
-        create_timestamp_index_sql = """CREATE INDEX cache_entries_last_modified ON cache_entries (last_modified)"""
+        create_timestamp_index_sql = """CREATE INDEX IF NOT EXISTS cache_entries_last_modified ON cache_entries (last_modified)"""
         c.execute(create_timestamp_index_sql)
         self.cache_db_conn.commit()
 
