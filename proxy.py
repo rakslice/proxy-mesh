@@ -144,6 +144,10 @@ class ProxyBackend(object):
         self.proxy_dir = proxy_dir
         self.cache_db = os.path.join(proxy_dir, "cache.sqlite3")
 
+        print "using proxy dir %s" % self.proxy_dir
+        if not os.path.exists(self.proxy_dir):
+            os.mkdir(self.proxy_dir)
+
         if rebuild_db and os.path.exists(self.cache_db):
             os.remove(self.cache_db)
 
@@ -161,10 +165,6 @@ class ProxyBackend(object):
 
         if rebuild_db:
             self.rebuild_db()
-
-        print "using proxy dir %s" % self.proxy_dir
-        if not os.path.exists(self.proxy_dir):
-            os.mkdir(self.proxy_dir)
 
     def update_metadata_entry(self, url, metadata, metadata_json=None):
         if metadata_json is None:
