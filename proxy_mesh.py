@@ -14,6 +14,7 @@ def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--port", "-p", type=int, help="TCP port to listen on", default=8000)
     parser.add_argument("--proxy-dir", help="A place to put the proxy data")
+    parser.add_argument("--rebuild-db", default=False, action="store_true", help="Rebuild the database of download metadata")
 
     return parser.parse_args()
 
@@ -36,7 +37,8 @@ def main():
     try:
 
         print "Starting HTTP proxy on port %d" % port
-        run_proxy(options.proxy_dir, port)
+        rebuild_db = options.rebuild_db
+        run_proxy(options.proxy_dir, port, rebuild_db=rebuild_db)
 
     finally:
         ad.cancel_our_ads()
@@ -63,16 +65,21 @@ class Advertisement(object):
             self.zc.unregister_service(info)
 
 
-def run_proxy(proxy_dir, port_val, start_ioloop=True):
+class MeshProxyHandler(ProxyHandler):
+    def __init__(self, *args, **kwargs):
+        super(MeshProxyHandler, self).__init__(*args, **kwargs)
+
+
+def run_proxy(proxy_dir, port_val, start_ioloop=True, rebuild_db=False):
     """
     Run proxy on the specified port. If start_ioloop is True (default),
     the tornado IOLoop will be started immediately.
     """
-    init_proxy_backend(proxy_dir)
+    init_proxy_backend(proxy_dir, rebuild_db)
     app = tornado.web.Application([
         # routes
         (r"/mesh-request/(.+)", MeshRequestHandler),
-        (r'.*', ProxyHandler),
+        (r'.*', MeshProxyHandler),
     ])
     app.listen(port_val)
     ioloop = tornado.ioloop.IOLoop.instance()

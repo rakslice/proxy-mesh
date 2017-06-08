@@ -31,16 +31,20 @@ import hashlib
 import json
 import logging
 import os
+import rfc822
 import sys
 import socket
 from urlparse import urlparse
 
+import sqlite3
 import tornado.httpserver
 import tornado.ioloop
 import tornado.iostream
 import tornado.web
 import tornado.httpclient
 import tornado.httputil
+
+META_JSON = "meta.json"
 
 logger = logging.getLogger('tornado_proxy')
 
@@ -133,13 +137,52 @@ def file_save(filename, file_contents):
 
 
 class ProxyBackend(object):
-    def __init__(self, proxy_dir):
+    def __init__(self, proxy_dir, rebuild_db):
         if proxy_dir is None:
             proxy_dir = os.path.join(get_local_home(), "proxy_mesh")
         self.proxy_dir = proxy_dir
+        self.cache_db = os.path.join(proxy_dir, "cache.sqlite3")
+
+        if rebuild_db and os.path.exists(self.cache_db):
+            os.remove(self.cache_db)
+
+        self.cache_db_conn = sqlite3.connect(self.cache_db)
+
+        create_table_sql = """CREATE TABLE IF NOT EXISTS cache_entries
+            (url TEXT PRIMARY KEY ASC, last_modified INTEGER, json TEXT NOT NULL)
+        """
+        c = self.cache_db_conn.cursor()
+        c.execute(create_table_sql)
+
+        create_timestamp_index_sql = """CREATE INDEX cache_entries_last_modified ON cache_entries (last_modified)"""
+        c.execute(create_timestamp_index_sql)
+        self.cache_db_conn.commit()
+
+        if rebuild_db:
+            self.rebuild_db()
+
         print "using proxy dir %s" % self.proxy_dir
         if not os.path.exists(self.proxy_dir):
             os.mkdir(self.proxy_dir)
+
+    def rebuild_db(self):
+        for dirpath, dirnames, filenames in os.walk(self.proxy_dir):
+            if META_JSON in filenames:
+                metadata_json = contents(os.path.join(dirpath, META_JSON))
+                metadata = json.loads(metadata_json)
+
+                last_modified_epoch = None
+                for key, value in metadata["headers"]:
+                    if key.lower() == "last-modified":
+                        last_modified_epoch = rfc822.mktime_tz(rfc822.parsedate_tz(value))
+                        break
+                rel = os.path.relpath(dirpath, self.proxy_dir)
+                parts = rel.split(os.sep)
+                url = "http://" + "/".join(parts)
+
+                with self.cache_db_conn:
+                    c = self.cache_db_conn.cursor()
+                    c.execute("""insert into cache_entries (url, last_modified, json) values (?, ?, ?)""", (url, last_modified_epoch, metadata_json))
 
     def get_cache_dir(self, url):
         for prefix in ["http://", "https://"]:
@@ -158,7 +201,7 @@ class ProxyBackend(object):
     def get_url(self, url):
         local_dir = self.get_cache_dir(url)
         if os.path.exists(local_dir):
-            metadata = json_load(os.path.join(local_dir, "meta.json"))
+            metadata = json_load(os.path.join(local_dir, META_JSON))
             body_data = contents(os.path.join(local_dir, "body"))
             return FakeResponse(metadata, body_data)
         return None
@@ -196,10 +239,10 @@ _proxy_backend = None
 """:type: ProxyBackend"""
 
 
-def init_proxy_backend(proxy_dir):
+def init_proxy_backend(proxy_dir, rebuild_db):
     global _proxy_backend
     assert _proxy_backend is None
-    _proxy_backend = ProxyBackend(proxy_dir)
+    _proxy_backend = ProxyBackend(proxy_dir, rebuild_db)
 
 
 class ParseHelper(object):

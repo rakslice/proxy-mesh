@@ -1,3 +1,6 @@
 *.pyc
 .idea/workspace.xml
 .idea/dictionaries/
+.idea/dataSources/9fa80f11-6062-4ed5-a78a-107f5df262a3.xml
+.idea/dataSources.local.xml
+.idea/dataSources.xml
