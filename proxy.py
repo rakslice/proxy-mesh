@@ -301,6 +301,10 @@ class ProxyBackend(object):
            """
             assert isinstance(response, tornado.httpclient.HTTPResponse)
 
+            if response.code == 400:
+                print "This proxy does not appear to support this; ignoring"
+                return
+
             assert response.headers["Content-type"] == "application/json"
             response_obj = json.loads(response.body)
 
