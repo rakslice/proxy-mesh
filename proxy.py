@@ -327,14 +327,20 @@ class ProxyBackend(object):
             next_key = response_obj["next_key"]
 
             def after_entries():
-                if next_key:
+                if next_key is not None:
                     next_page_uri = uri_format % (ip, port) + "?" + urllib.urlencode({"next_key": next_key})
 
+                    print "SYNC FETCHING LISTING %s" % next_page_uri
                     fetch_request(next_page_uri, handle_response)
+                else:
+                    print "SYNC COMPLETE"
 
             self.download_entries(ip, port, entries, 0, after_entries)
 
         uri = uri_format % (ip, port)
+
+        print "SYNC WITH %s:%d" % (ip, port)
+        print "SYNC FETCHING LISTING %s" % uri
 
         fetch_request(
             uri, handle_response,
