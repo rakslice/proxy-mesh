@@ -305,7 +305,9 @@ class ProxyBackend(object):
                 print "This proxy does not appear to support this; ignoring"
                 return
 
-            assert response.headers["Content-type"] == "application/json"
+            content_type = response.headers.get("Content-type")
+            if content_type != "application/json":
+                assert False, "mesh listing content-type was %s" % content_type
             response_obj = json.loads(response.body)
 
             entries = response_obj["entries"]
