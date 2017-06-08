@@ -178,8 +178,8 @@ class ProxyBackend(object):
         with self.cache_db_conn:
             self.cache_db_conn.execute("""insert or replace into cache_entries (url, last_modified, json) values (?, ?, ?)""", (url, last_modified_epoch, metadata_json))
 
-    INITIAL_LIST_SQL = """SELECT (url, last_modified) FROM cache_entries ORDER BY url LIMIT ?"""
-    SUBSEQUENT_LIST_SQL = """SELECT (url, last_modified) FROM cache_entries WHERE url >= ? ORDER BY url LIMIT ?"""
+    INITIAL_LIST_SQL = """SELECT url, last_modified FROM cache_entries ORDER BY url LIMIT ?"""
+    SUBSEQUENT_LIST_SQL = """SELECT url, last_modified FROM cache_entries WHERE url >= ? ORDER BY url LIMIT ?"""
 
     def list_entries(self, count, next_key=None):
         """
