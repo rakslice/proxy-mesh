@@ -35,6 +35,36 @@ class MeshRequestHandler(tornado.web.RequestHandler):
         self.finish(json.dumps({"entries": entries, "next_key": next_key}))
 
 
+class MeshNotifyHandler(tornado.web.RequestHandler):
+    def post(self):
+        backend = get_proxy_backend()
+
+        def our_finish():
+            self.add_header("Content-type", "application/json")
+            self.write(json.dumps({"result": "ok"}))
+            self.finish()
+
+        if backend is not None:
+            data = self.request.body
+            obj = json.loads(data)
+
+            url = obj["url"]
+            metadata = obj["metadata"]
+            proxy_ip = obj["proxy_ip"]
+            proxy_port = obj["proxy_port"]
+
+            last_modified = None
+            for key, val in metadata["headers"]:
+                if key.lower() == "last-modified":
+                    last_modified = val
+
+            entry = {"url": url, "last_modified": last_modified}
+
+            backend.download_entries(proxy_ip, proxy_port, [entry], 0, our_finish)
+        else:
+            our_finish()
+
+
 def main():
     options = parse_args()
     port = options.port
@@ -49,7 +79,7 @@ def main():
 
         print "Starting HTTP proxy on port %d" % port
         rebuild_db = options.rebuild_db
-        run_proxy(options.proxy_dir, port, rebuild_db=rebuild_db)
+        run_proxy(options.proxy_dir, ip, port, rebuild_db=rebuild_db)
 
     finally:
         ad.close()
@@ -83,6 +113,9 @@ class Advertisement(object):
 
     def remove_service(self, zeroconf, type, name):
         print("Service %s removed" % (name,))
+        info = zeroconf.get_service_info(type, name)
+        if info.address != self.our_ip:
+            self.on_remote_service_removed(socket.inet_ntoa(info.address), info.port)
 
     def add_service(self, zeroconf, type, name):
         info = zeroconf.get_service_info(type, name)
@@ -96,7 +129,17 @@ class Advertisement(object):
             print "deferring sync with proxy %s:%d until we are started" % (ip, port)
             deferred_remote_service_inits.append((ip, port))
         else:
-            backend.sync_remote_service(ip, port)
+            backend.on_peer_added(ip, port)
+
+    def on_remote_service_removed(self, ip, port):
+        backend = get_proxy_backend()
+        if backend is None:
+            try:
+                deferred_remote_service_inits.remove((ip, port))
+            except ValueError:
+                pass
+        else:
+            backend.on_peer_removed(ip, port)
 
     def cancel_our_ads(self):
         infos = self.info_entries
@@ -113,21 +156,22 @@ class MeshProxyHandler(ProxyHandler):
 deferred_remote_service_inits = []
 
 
-def run_proxy(proxy_dir, port_val, start_ioloop=True, rebuild_db=False):
+def run_proxy(proxy_dir, our_ip, port_val, start_ioloop=True, rebuild_db=False):
     """
     Run proxy on the specified port. If start_ioloop is True (default),
     the tornado IOLoop will be started immediately.
     """
-    backend = init_proxy_backend(proxy_dir, rebuild_db)
+    backend = init_proxy_backend(our_ip, port_val, proxy_dir, rebuild_db)
 
     remotes = list(deferred_remote_service_inits)
     deferred_remote_service_inits[:] = []
     for ip, port in remotes:
-        backend.sync_remote_service(ip, port)
+        backend.on_peer_added(ip, port)
 
     app = tornado.web.Application([
         # routes
         (r"/mesh-request", MeshRequestHandler),
+        (r"/mesh-notify", MeshNotifyHandler),
         (r'.*', MeshProxyHandler),
     ])
     app.listen(port_val)

@@ -138,7 +138,10 @@ def file_save(filename, file_contents):
 
 
 class ProxyBackend(object):
-    def __init__(self, proxy_dir, rebuild_db):
+    def __init__(self, our_ip, our_port, proxy_dir, rebuild_db):
+        self.peers = []
+        self.our_ip = our_ip
+        self.our_port = our_port
         if proxy_dir is None:
             proxy_dir = os.path.join(get_local_home(), "proxy_mesh")
         self.proxy_dir = proxy_dir
@@ -168,7 +171,7 @@ class ProxyBackend(object):
         if rebuild_db:
             self.rebuild_db()
 
-    def update_metadata_entry(self, url, metadata, metadata_json=None):
+    def update_metadata_database_entry(self, url, metadata, metadata_json=None):
         if metadata_json is None:
             metadata_json = json.dumps(metadata_json)
         last_modified_epoch = None
@@ -231,7 +234,7 @@ class ProxyBackend(object):
                 parts = rel.split(os.sep)
                 url = "http://" + "/".join(parts)
 
-                self.update_metadata_entry(url, metadata, metadata_json)
+                self.update_metadata_database_entry(url, metadata, metadata_json)
 
     def get_cache_dir(self, url):
         for prefix in ["http://", "https://"]:
@@ -292,11 +295,13 @@ class ProxyBackend(object):
     def save_current_download_metadata(self, url):
         metadata = self.downloads_in_progress_with_metadata.pop(url)
         self.save_metadata(url, metadata)
+        self.notify_new_content(url, metadata)
+        return metadata
 
     def save_metadata(self, url, metadata):
         local_dir = self.get_cache_dir(url)
         json_save(os.path.join(local_dir, META_JSON), metadata)
-        self.update_metadata_entry(url, metadata)
+        self.update_metadata_database_entry(url, metadata)
 
     def download_remote_service_entry(self, ip, port, url, done_callback):
         proxy_prefix = "http://%s:%d/" % (ip, port)
@@ -366,15 +371,49 @@ class ProxyBackend(object):
             uri, handle_response,
             method="GET")
 
+    def on_peer_added(self, ip, port):
+        entry = (ip, port)
+        if entry not in self.peers:
+            self.peers.append(entry)
+            self.sync_remote_service(ip, port)
+
+    def on_peer_removed(self, ip, port):
+        try:
+            self.peers.remove((ip, port))
+        except ValueError:
+            pass
+
+    def notify_new_content(self, url, metadata):
+        if len(self.peers) == 0:
+            return
+        payload_body = {
+            "url": url,
+            "metadata": metadata,
+            "proxy_ip": self.our_ip,
+            "proxy_port": self.our_port,
+        }
+        payload_json = json.dumps(payload_body)
+        for peer_ip, port in self.peers:
+            print "MESH-NOTIFY %s:%d %s" % (peer_ip, port, url)
+
+            def handle_response(response):
+                assert isinstance(response, tornado.httpclient.HTTPResponse)
+                if response.code != 200:
+                    print "MESH-NOTIFY %s:%d %s failed with %s %s" % (peer_ip, port, url, response.code, response.reason)
+
+            headers = tornado.httputil.HTTPHeaders()
+            headers.add("Content-type", "application/json")
+            fetch_request("http://%s:%d/mesh-notify", handle_response, method="POST", body=payload_json, headers=headers)
+
 
 _proxy_backend = None
 """:type: ProxyBackend"""
 
 
-def init_proxy_backend(proxy_dir, rebuild_db):
+def init_proxy_backend(our_ip, our_port, proxy_dir, rebuild_db):
     global _proxy_backend
     assert _proxy_backend is None
-    _proxy_backend = ProxyBackend(proxy_dir, rebuild_db)
+    _proxy_backend = ProxyBackend(our_ip, our_port, proxy_dir, rebuild_db)
     return _proxy_backend
 
 
@@ -513,7 +552,9 @@ class ProxyHandler(tornado.web.RequestHandler):
                         print "WARNING content length mismatch %d %d" % (parse_helper.body_size, content_length)
                 url = self.request.uri
                 if url in _proxy_backend.downloads_in_progress_with_metadata:
-                    _proxy_backend.save_current_download_metadata(url)
+                    metadata = _proxy_backend.save_current_download_metadata(url)
+                    _proxy_backend.notify_peers_about_new_content(url, metadata)
+
             self.finish()
 
         body = self.request.body
