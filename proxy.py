@@ -154,6 +154,7 @@ class ProxyBackend(object):
             os.mkdir(self.proxy_dir)
 
         if rebuild_db and os.path.exists(self.cache_db):
+            print "removing existing db"
             os.remove(self.cache_db)
 
         self.cache_db_conn = sqlite3.connect(self.cache_db)
@@ -169,7 +170,9 @@ class ProxyBackend(object):
             conn.execute(create_timestamp_index_sql)
 
         if rebuild_db:
+            print "rebuilding db"
             self.rebuild_db()
+            print "done rebuilding db"
 
     def update_metadata_database_entry(self, url, metadata, metadata_json=None):
         if metadata_json is None:
