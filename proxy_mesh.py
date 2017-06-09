@@ -114,13 +114,14 @@ class Advertisement(object):
 
     def remove_service(self, zeroconf, type, name):
         print("Service %s removed" % (name,))
-        address, port = self.service_ip_ports_by_name[name]
+        address, port = self.service_ip_ports_by_name.pop(name)
         if address != self.our_ip:
             self.on_remote_service_removed(socket.inet_ntoa(address), port)
 
     def add_service(self, zeroconf, type, name):
         info = zeroconf.get_service_info(type, name)
         print("Service %s added, service info: %s" % (name, info))
+        assert name not in self.service_ip_ports_by_name
         self.service_ip_ports_by_name[name] = (info.address, info.port)
         if info.address != self.our_ip:
             self.on_remote_service_added(socket.inet_ntoa(info.address), info.port)
