@@ -180,8 +180,7 @@ class ProxyBackend(object):
                 last_modified_epoch = rfc822.mktime_tz(rfc822.parsedate_tz(value))
                 break
 
-        with self.cache_db_conn:
-            self.cache_db_conn.execute("""insert or replace into cache_entries (url, last_modified, json) values (?, ?, ?)""", (url, last_modified_epoch, metadata_json))
+        self.cache_db_conn.execute("""insert or replace into cache_entries (url, last_modified, json) values (?, ?, ?)""", (url, last_modified_epoch, metadata_json))
 
     INITIAL_LIST_SQL = """SELECT url, last_modified FROM cache_entries ORDER BY url LIMIT ?"""
     SUBSEQUENT_LIST_SQL = """SELECT url, last_modified FROM cache_entries WHERE url >= ? ORDER BY url LIMIT ?"""
@@ -225,16 +224,18 @@ class ProxyBackend(object):
                 c.close()
 
     def rebuild_db(self):
-        for dirpath, dirnames, filenames in os.walk(self.proxy_dir):
-            if META_JSON in filenames:
-                metadata_json = contents(os.path.join(dirpath, META_JSON))
-                metadata = json.loads(metadata_json)
+        with self.cache_db_conn:
+            for dirpath, dirnames, filenames in os.walk(self.proxy_dir):
+                if META_JSON in filenames:
+                    print dirpath
+                    metadata_json = contents(os.path.join(dirpath, META_JSON))
+                    metadata = json.loads(metadata_json)
 
-                rel = os.path.relpath(dirpath, self.proxy_dir)
-                parts = rel.split(os.sep)
-                url = "http://" + "/".join(parts)
+                    rel = os.path.relpath(dirpath, self.proxy_dir)
+                    parts = rel.split(os.sep)
+                    url = "http://" + "/".join(parts)
 
-                self.update_metadata_database_entry(url, metadata, metadata_json)
+                    self.update_metadata_database_entry(url, metadata, metadata_json)
 
     def get_cache_dir(self, url):
         for prefix in ["http://", "https://"]:
@@ -301,7 +302,8 @@ class ProxyBackend(object):
     def save_metadata(self, url, metadata):
         local_dir = self.get_cache_dir(url)
         json_save(os.path.join(local_dir, META_JSON), metadata)
-        self.update_metadata_database_entry(url, metadata)
+        with self.cache_db_conn:
+            self.update_metadata_database_entry(url, metadata)
 
     def download_remote_service_entry(self, ip, port, url, done_callback):
         proxy_prefix = "http://%s:%d/" % (ip, port)
