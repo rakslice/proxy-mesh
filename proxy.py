@@ -442,7 +442,7 @@ class ProxyHandler(tornado.web.RequestHandler):
 
             for header, v in parse_helper.headers.get_all():
                 if header not in ('Content-Length', 'Transfer-Encoding', 'Content-Encoding', 'Connection'):
-                    self.add_header(header, v) # some header appear multiple times, eg 'Set-Cookie'
+                    self.add_header(header, v)  # some header appear multiple times, eg 'Set-Cookie'
 
             # if response.body:
             #     self.set_header('Content-Length', len(response.body))
@@ -480,7 +480,7 @@ class ProxyHandler(tornado.web.RequestHandler):
 
                 for header, v in response.headers.get_all():
                     if header not in ('Content-Length', 'Transfer-Encoding', 'Content-Encoding', 'Connection'):
-                        self.add_header(header, v) # some header appear multiple times, eg 'Set-Cookie'
+                        self.add_header(header, v)  # some header appear multiple times, eg 'Set-Cookie'
 
                 if response.body:
                     self.set_header('Content-Length', len(response.body))
@@ -640,10 +640,15 @@ def run_proxy(port_val, start_ioloop=True):
     if start_ioloop:
         ioloop.start()
 
-if __name__ == '__main__':
+
+def main():
     port = 8888
     if len(sys.argv) > 1:
         port = int(sys.argv[1])
 
     print ("Starting HTTP proxy on port %d" % port)
     run_proxy(port)
+
+
+if __name__ == '__main__':
+    main()
