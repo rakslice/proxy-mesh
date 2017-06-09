@@ -144,6 +144,8 @@ class ProxyBackend(object):
         self.proxy_dir = proxy_dir
         self.cache_db = os.path.join(proxy_dir, "cache.sqlite3")
 
+        self.downloads_in_progress_with_metadata = {}
+
         print "using proxy dir %s" % self.proxy_dir
         if not os.path.exists(self.proxy_dir):
             os.mkdir(self.proxy_dir)
@@ -263,24 +265,38 @@ class ProxyBackend(object):
         if error is not None:
             error = error.args
 
-        handle = self.save_url_handle(url, response.code, error, response.reason, response.headers)
+        handle = self.save_url_handle(url, response.code, error, response.reason, response.headers, save_immediate=True)
         try:
             handle.write(response.body)
         finally:
             handle.close()
 
-    def save_url_handle(self, url, code, error, reason, headers):
+    def save_url_handle(self, url, code, error, reason, headers, save_immediate=False):
         metadata = {"code": code,
                     "error": error,
                     "headers": list(headers.get_all()),
                     "reason": reason
                     }
+
+        assert url not in self.downloads_in_progress_with_metadata
+
         local_dir = self.get_cache_dir(url)
         if not os.path.isdir(local_dir):
             os.makedirs(local_dir)
+        if save_immediate:
+            self.save_metadata(url, metadata)
+        else:
+            self.downloads_in_progress_with_metadata[url] = metadata
+        return open(os.path.join(local_dir, "body"), "wb")
+
+    def save_current_download_metadata(self, url):
+        metadata = self.downloads_in_progress_with_metadata.pop(url)
+        self.save_metadata(url, metadata)
+
+    def save_metadata(self, url, metadata):
+        local_dir = self.get_cache_dir(url)
         json_save(os.path.join(local_dir, META_JSON), metadata)
         self.update_metadata_entry(url, metadata)
-        return open(os.path.join(local_dir, "body"), "wb")
 
     def download_remote_service_entry(self, ip, port, url, done_callback):
         proxy_prefix = "http://%s:%d/" % (ip, port)
@@ -427,6 +443,9 @@ class ProxyHandler(tornado.web.RequestHandler):
             if self.request.method == "GET" and self.request.body == "" and 200 <= parse_helper.code < 300:
                 print "Saving stream %s %s %s" % (self.request.method, parse_helper.code, self.request.uri)
                 parse_helper.write_handle = _proxy_backend.save_url_handle(self.request.uri, parse_helper.code, parse_helper.error, parse_helper.reason, parse_helper.headers)
+            elif self.request.method == "GET" and self.request.body == "" and parse_helper.code == 301:
+                new_url = parse_helper.headers.get("Location")
+                print "Skipping saving stream %s %s %s to %s %s" % (self.request.method, parse_helper.code, parse_helper.reason, new_url, self.request.uri)
             else:
                 print "Skipping saving stream %s %s %s" % (self.request.method, parse_helper.code, self.request.uri)
 
@@ -457,11 +476,11 @@ class ProxyHandler(tornado.web.RequestHandler):
             self.flush()
             parse_helper.handle_data_chunk(data)
 
-        def handle_response(response, loaded=False):
+        def handle_response(response, loaded_from_cache=False):
             if parse_helper.response_handled:
                 return
             parse_helper.response_handled = True
-            if not loaded:
+            if not loaded_from_cache:
                 # if self.request.method == "GET" and self.request.body == "" and 200 <= response.code < 300:
                 #     print "Saving %s %s %s" % (self.request.method, response.code, self.request.uri)
                 #     _proxy_backend.save_url(self.request.uri, response)
@@ -474,7 +493,7 @@ class ProxyHandler(tornado.web.RequestHandler):
             if response.error and not isinstance(response.error, tornado.httpclient.HTTPError):
                 self.set_status(500)
                 self.write('Internal server error:\n' + str(response.error))
-            elif loaded:
+            elif loaded_from_cache:
                 self.set_status(response.code, response.reason)
                 self._headers = tornado.httputil.HTTPHeaders()  # clear tornado default header
 
@@ -486,12 +505,15 @@ class ProxyHandler(tornado.web.RequestHandler):
                     self.set_header('Content-Length', len(response.body))
                     self.write(response.body)
             else:
-                assert not loaded
+                assert not loaded_from_cache
                 if "Content-Length" in response.headers:
                     content_length = int(response.headers["Content-Length"])
                     print "%s content-length %d" % (self.request.uri, content_length)
                     if parse_helper.body_size != content_length:
                         print "WARNING content length mismatch %d %d" % (parse_helper.body_size, content_length)
+                url = self.request.uri
+                if url in _proxy_backend.downloads_in_progress_with_metadata:
+                    _proxy_backend.save_current_download_metadata(url)
             self.finish()
 
         body = self.request.body
