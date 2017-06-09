@@ -93,6 +93,7 @@ class Advertisement(object):
 
         self.our_ip = None
         self.browser = zeroconf.ServiceBrowser(self.zc, "_apt_proxy._tcp.local.", self)
+        self.service_ip_ports_by_name = {}
 
     def close(self):
         self.cancel_our_ads()
@@ -113,13 +114,14 @@ class Advertisement(object):
 
     def remove_service(self, zeroconf, type, name):
         print("Service %s removed" % (name,))
-        info = zeroconf.get_service_info(type, name)
-        if info.address != self.our_ip:
-            self.on_remote_service_removed(socket.inet_ntoa(info.address), info.port)
+        address, port = self.service_ip_ports_by_name[name]
+        if address != self.our_ip:
+            self.on_remote_service_removed(socket.inet_ntoa(address), port)
 
     def add_service(self, zeroconf, type, name):
         info = zeroconf.get_service_info(type, name)
         print("Service %s added, service info: %s" % (name, info))
+        self.service_ip_ports_by_name[name] = (info.address, info.port)
         if info.address != self.our_ip:
             self.on_remote_service_added(socket.inet_ntoa(info.address), info.port)
 
