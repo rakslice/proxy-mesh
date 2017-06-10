@@ -1,5 +1,6 @@
 import argparse
 import json
+import rfc822
 import socket
 
 import tornado.web
@@ -56,7 +57,8 @@ class MeshNotifyHandler(tornado.web.RequestHandler):
             last_modified = None
             for key, val in metadata["headers"]:
                 if key.lower() == "last-modified":
-                    last_modified = val
+                    last_modified = rfc822.mktime_tz(rfc822.parsedate_tz(val))
+                    break
 
             entry = {"url": url, "last_modified": last_modified}
 
