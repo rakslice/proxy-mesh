@@ -257,7 +257,7 @@ class ProxyBackend(object):
 
     def get_url(self, url):
         local_dir = self.get_cache_dir(url)
-        if os.path.exists(local_dir):
+        if os.path.exists(local_dir) and os.path.exists(os.path.join(local_dir, META_JSON)):
             metadata = json_load(os.path.join(local_dir, META_JSON))
             body_data = contents(os.path.join(local_dir, "body"))
             return FakeResponse(metadata, body_data)
