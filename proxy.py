@@ -175,6 +175,7 @@ class ProxyBackend(object):
             print "done rebuilding db"
 
     def update_metadata_database_entry(self, url, metadata, metadata_json=None):
+        """Caller is responsible for committing the transaction, so they can do multiple updates in one transaction for performance"""
         if metadata_json is None:
             metadata_json = json.dumps(metadata_json)
         last_modified_epoch = None
@@ -494,10 +495,10 @@ class ProxyHandler(tornado.web.RequestHandler):
                 print "Skipping saving stream %s %s %s" % (self.request.method, parse_helper.code, self.request.uri)
 
             if converted_request_to_conditional and parse_helper.code == 304:
-                # We converted a request to conditional and it checkout out
-                # so serve the original proxy response
+                # We converted a request to conditional and found our cache was up to date
+                # so serve the original cache-based response
                 print "Conditional request passed"
-                handle_response(cache_response, True)
+                handle_response(cache_response, loaded_from_cache=True)
                 return
 
             self.set_status(parse_helper.code, parse_helper.reason)
@@ -607,7 +608,7 @@ class ProxyHandler(tornado.web.RequestHandler):
                             self.request.headers.add("If-Modified-Since", cache_response.headers["Last-Modified"])
                     else:
                         print "Using saved %s" % self.request.uri
-                        handle_response(cache_response, True)
+                        handle_response(cache_response, loaded_from_cache=True)
                         return
                 else:
                     assert not cache_only
