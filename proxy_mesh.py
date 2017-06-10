@@ -54,6 +54,8 @@ class MeshNotifyHandler(tornado.web.RequestHandler):
             proxy_ip = obj["proxy_ip"]
             proxy_port = obj["proxy_port"]
 
+            print "GOT MESH-NOTIFY from %s:%d %s" % (proxy_ip, proxy_port, url)
+
             last_modified = None
             for key, val in metadata["headers"]:
                 if key.lower() == "last-modified":
