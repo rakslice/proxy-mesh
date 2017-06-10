@@ -408,7 +408,7 @@ class ProxyBackend(object):
 
             headers = tornado.httputil.HTTPHeaders()
             headers.add("Content-type", "application/json")
-            fetch_request("http://%s:%d/mesh-notify", handle_response, method="POST", body=payload_json, headers=headers)
+            fetch_request("http://%s:%d/mesh-notify" % (peer_ip, port), handle_response, method="POST", body=payload_json, headers=headers)
 
 
 _proxy_backend = None
