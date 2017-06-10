@@ -37,6 +37,7 @@ class MeshRequestHandler(tornado.web.RequestHandler):
 
 
 class MeshNotifyHandler(tornado.web.RequestHandler):
+    @tornado.web.asynchronous
     def post(self):
         backend = get_proxy_backend()
 
