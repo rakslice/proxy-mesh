@@ -300,7 +300,6 @@ class ProxyBackend(object):
     def save_current_download_metadata(self, url):
         metadata = self.downloads_in_progress_with_metadata.pop(url)
         self.save_metadata(url, metadata)
-        self.notify_peers_about_new_content(url, metadata)
         return metadata
 
     def save_metadata(self, url, metadata):
