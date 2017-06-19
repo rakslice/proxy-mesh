@@ -555,6 +555,10 @@ class ProxyHandler(tornado.web.RequestHandler):
                 if response.body:
                     self.set_header('Content-Length', len(response.body))
                     self.write(response.body)
+            elif response.error and 400 <= response.code < 600:
+                assert not loaded_from_cache
+                url = self.request.uri
+                print "%s: Error during serving of uncached content: %s" % (url, response.error)
             else:
                 assert not loaded_from_cache
                 if "Content-Length" in response.headers:
