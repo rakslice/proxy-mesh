@@ -25,6 +25,10 @@ class MeshRequestHandler(tornado.web.RequestHandler):
 
     PAGE_LIMIT = 26
 
+    def data_received(self, chunk):
+        # not a streaming mode request handler
+        assert False
+
     def get(self):
         next_key = self.get_argument("next_key", None)
 
@@ -68,6 +72,10 @@ class MeshNotifyHandler(tornado.web.RequestHandler):
             backend.download_entries(proxy_ip, proxy_port, [entry], 0, our_finish)
         else:
             our_finish()
+
+    def data_received(self, chunk):
+        # not a streaming mode request handler
+        assert False
 
 
 def main():
@@ -117,21 +125,33 @@ class Advertisement(object):
         self.zc.register_service(info)
         self.info_entries.append(info)
 
-    def remove_service(self, zeroconf, type, name):
+    # noinspection PyUnusedLocal
+    def remove_service(self, zeroconf_obj, cur_type, name):
+        """
+        :type zeroconf_obj: zeroconf.Zeroconf
+        :type cur_type: str
+        :type name: str
+        """
         print("Service %s removed" % (name,))
         address, port = self.service_ip_ports_by_name.pop(name)
         if address != self.our_ip:
             self.on_remote_service_removed(socket.inet_ntoa(address), port)
 
-    def add_service(self, zeroconf, type, name):
-        info = zeroconf.get_service_info(type, name)
+    def add_service(self, zeroconf_obj, cur_type, name):
+        """
+        :type zeroconf_obj: zeroconf.Zeroconf
+        :type cur_type: str
+        :type name: str
+        """
+        info = zeroconf_obj.get_service_info(cur_type, name)
         print("Service %s added, service info: %s" % (name, info))
         assert name not in self.service_ip_ports_by_name
         self.service_ip_ports_by_name[name] = (info.address, info.port)
         if info.address != self.our_ip:
             self.on_remote_service_added(socket.inet_ntoa(info.address), info.port)
 
-    def on_remote_service_added(self, ip, port):
+    @staticmethod
+    def on_remote_service_added(ip, port):
         backend = get_proxy_backend()
         if backend is None:
             print "deferring sync with proxy %s:%d until we are started" % (ip, port)
@@ -139,7 +159,8 @@ class Advertisement(object):
         else:
             backend.on_peer_added(ip, port)
 
-    def on_remote_service_removed(self, ip, port):
+    @staticmethod
+    def on_remote_service_removed(ip, port):
         backend = get_proxy_backend()
         if backend is None:
             try:
@@ -150,9 +171,9 @@ class Advertisement(object):
             backend.on_peer_removed(ip, port)
 
     def cancel_our_ads(self):
-        infos = self.info_entries
+        cur_info_entries = self.info_entries
         self.info_entries = []
-        for info in infos:
+        for info in cur_info_entries:
             self.zc.unregister_service(info)
 
 

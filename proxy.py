@@ -483,7 +483,12 @@ def calc_sha1(data):
 
 
 class ProxyHandler(tornado.web.RequestHandler):
+
     SUPPORTED_METHODS = ['GET', 'POST', 'CONNECT']
+
+    def data_received(self, chunk):
+        # not a streaming mode request handler
+        assert False
 
     def compute_etag(self):
         return None  # disable tornado Etag
