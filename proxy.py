@@ -630,6 +630,7 @@ class ProxyHandler(tornado.web.RequestHandler):
                 self.request.uri, handle_response,
                 method=self.request.method, body=body,
                 headers=self.request.headers, follow_redirects=False,
+                request_timeout=3600.0,
                 allow_nonstandard_methods=True,
                 streaming_callback=handle_data_chunk,
                 header_callback=parse_helper.handle_header_line)
