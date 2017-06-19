@@ -45,6 +45,9 @@ import tornado.web
 import tornado.httpclient
 import tornado.httputil
 
+REQUEST_TIMEOUT = 3600.0
+MAX_BODY_SIZE = 2 * 1024 * 1024 * 1024
+
 META_JSON = "meta.json"
 
 logger = logging.getLogger('tornado_proxy')
@@ -74,7 +77,7 @@ def fetch_request(url, callback, **kwargs):
         kwargs['proxy_port'] = port_val
 
     req = tornado.httpclient.HTTPRequest(url, **kwargs)
-    client = tornado.httpclient.AsyncHTTPClient(max_body_size=2*1024*1024*1024)
+    client = tornado.httpclient.AsyncHTTPClient(max_body_size=MAX_BODY_SIZE)
     client.fetch(req, callback, raise_error=False)
 
 
@@ -630,7 +633,7 @@ class ProxyHandler(tornado.web.RequestHandler):
                 self.request.uri, handle_response,
                 method=self.request.method, body=body,
                 headers=self.request.headers, follow_redirects=False,
-                request_timeout=3600.0,
+                request_timeout=REQUEST_TIMEOUT,
                 allow_nonstandard_methods=True,
                 streaming_callback=handle_data_chunk,
                 header_callback=parse_helper.handle_header_line)
