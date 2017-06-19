@@ -74,7 +74,7 @@ def fetch_request(url, callback, **kwargs):
         kwargs['proxy_port'] = port_val
 
     req = tornado.httpclient.HTTPRequest(url, **kwargs)
-    client = tornado.httpclient.AsyncHTTPClient()
+    client = tornado.httpclient.AsyncHTTPClient(max_body_size=2*1024*1024*1024)
     client.fetch(req, callback, raise_error=False)
 
 
