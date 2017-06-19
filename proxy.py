@@ -260,7 +260,14 @@ class ProxyBackend(object):
         if os.path.exists(local_dir) and os.path.exists(os.path.join(local_dir, META_JSON)):
             metadata = json_load(os.path.join(local_dir, META_JSON))
             body_data = contents(os.path.join(local_dir, "body"))
-            return FakeResponse(metadata, body_data)
+            fr = FakeResponse(metadata, body_data)
+            if "Content-length" in fr.headers:
+                content_length_str = fr.headers["Content-length"]
+                if content_length_str is not None:
+                    if len(body_data) != int(content_length_str):
+                        print "Ignoring cached resource as size doesn't match content-length from headers"
+                        return None
+            return fr
         return None
 
     def save_url(self, url, response):
