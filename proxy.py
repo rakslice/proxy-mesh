@@ -159,6 +159,9 @@ class LimitTracker(object):
         self.index += 1
         return self.index
 
+    def queue_empty(self):
+        return self.cur_count == 0
+
     def done(self):
         if self.index > 0:
             self.cur_count -= 1
