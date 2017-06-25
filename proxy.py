@@ -140,6 +140,30 @@ def file_save(filename, file_contents):
         handle.write(file_contents)
 
 
+class LimitTracker(object):
+    def __init__(self, limit):
+        self.limit = limit
+        self.cur_count = 0
+        self.index = 0
+
+    def at_limit(self):
+        return self.cur_count >= self.limit
+
+    def started(self):
+        self.cur_count += 1
+
+    def cur_index(self):
+        return self.index
+
+    def next_index(self):
+        self.index += 1
+        return self.index
+
+    def done(self):
+        if self.index > 0:
+            self.cur_count -= 1
+
+
 class ProxyBackend(object):
     def __init__(self, our_ip, our_port, proxy_dir, rebuild_db):
         self.peers = []
@@ -336,15 +360,21 @@ class ProxyBackend(object):
         fetch_request(proxy_prefix + url, download_complete, headers=headers)
         # fetch_request(url, download_complete, proxy_host=ip, proxy_port=port, headers=headers)
 
-    def download_entries(self, ip, port, entries, cur_index, done_callback):
-        while cur_index < len(entries):
-            metadata_record = entries[cur_index]
+    def download_entries(self, ip, port, entries, done_callback, tracker):
+        assert isinstance(tracker, LimitTracker)
+        tracker.done()
+        while tracker.cur_index() < len(entries):
+            metadata_record = entries[tracker.cur_index()]
+            tracker.next_index()
             url = metadata_record["url"]
             last_modified_epoch = metadata_record["last_modified"]
             if not self.check_existing_entry(url, last_modified_epoch):
-                self.download_remote_service_entry(ip, port, url, lambda: self.download_entries(ip, port, entries, cur_index + 1, done_callback))
-                return
-            cur_index += 1
+                assert not tracker.at_limit()
+                self.download_remote_service_entry(ip, port, url, lambda: self.download_entries(ip, port, entries, done_callback, tracker))
+                tracker.started()
+                if tracker.at_limit():
+                    # we can't start any more downloads right now
+                    return
         done_callback()
 
     def sync_remote_service(self, ip, port):
@@ -377,7 +407,8 @@ class ProxyBackend(object):
                 else:
                     print "SYNC COMPLETE"
 
-            self.download_entries(ip, port, entries, 0, after_entries)
+            tracker = LimitTracker(4)
+            self.download_entries(ip, port, entries, after_entries, tracker)
 
         uri = uri_format % (ip, port)
 
