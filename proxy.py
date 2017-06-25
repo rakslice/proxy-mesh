@@ -145,11 +145,17 @@ class LimitTracker(object):
         self.limit = limit
         self.cur_count = 0
         self.index = 0
+        self.keys_done = set()
+
+    def unique(self, key):
+        assert key not in self.keys_done
+        self.keys_done.add(key)
 
     def at_limit(self):
         return self.cur_count >= self.limit
 
-    def started(self):
+    def started(self, *key):
+        self.unique(key)
         self.cur_count += 1
 
     def cur_index(self):
@@ -374,11 +380,12 @@ class ProxyBackend(object):
             if not self.check_existing_entry(url, last_modified_epoch):
                 assert not tracker.at_limit()
                 self.download_remote_service_entry(ip, port, url, lambda: self.download_entries(ip, port, entries, done_callback, tracker))
-                tracker.started()
+                tracker.started(ip, port, url)
                 if tracker.at_limit():
                     # we can't start any more downloads right now
                     return
-        done_callback()
+        if tracker.queue_empty():
+            done_callback()
 
     def sync_remote_service(self, ip, port):
         uri_format = "http://%s:%d/mesh-request"
