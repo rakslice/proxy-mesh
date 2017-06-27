@@ -93,6 +93,11 @@ def contents(filename):
         return handle.read()
 
 
+def get_size(filename):
+    st = os.stat(filename)
+    return st.st_size
+
+
 def json_load(filename):
     with open(filename, "r") as handle:
         return json.load(handle)
@@ -295,14 +300,18 @@ class ProxyBackend(object):
         local_dir = self.get_cache_dir(url)
         if os.path.exists(local_dir) and os.path.exists(os.path.join(local_dir, META_JSON)):
             metadata = json_load(os.path.join(local_dir, META_JSON))
-            body_data = contents(os.path.join(local_dir, "body"))
-            fr = FakeResponse(metadata, body_data)
-            if "Content-length" in fr.headers:
-                content_length_str = fr.headers["Content-length"]
+            body_data_filename = os.path.join(local_dir, "body")
+
+            headers = FakeHeaders(metadata["headers"])
+            if "Content-length" in headers:
+                content_length_str = headers["Content-length"]
                 if content_length_str is not None:
-                    if len(body_data) != int(content_length_str):
+                    if get_size(body_data_filename) != int(content_length_str):
                         print "Ignoring cached resource as size doesn't match content-length from headers"
                         return None
+
+            body_data = contents(body_data_filename)
+            fr = FakeResponse(metadata, body_data)
             return fr
         return None
 

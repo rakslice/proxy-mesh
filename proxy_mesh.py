@@ -8,7 +8,7 @@ import tornado.ioloop
 import tornado.template
 import zeroconf
 
-from proxy import ProxyHandler, init_proxy_backend, get_proxy_backend
+from proxy import ProxyHandler, init_proxy_backend, get_proxy_backend, LimitTracker
 from utils import get_ip
 
 
@@ -69,7 +69,8 @@ class MeshNotifyHandler(tornado.web.RequestHandler):
 
             entry = {"url": url, "last_modified": last_modified}
 
-            backend.download_entries(proxy_ip, proxy_port, [entry], 0, our_finish)
+            tracker = LimitTracker(4)
+            backend.download_entries(proxy_ip, proxy_port, [entry], our_finish, tracker)
         else:
             our_finish()
 
