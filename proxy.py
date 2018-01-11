@@ -693,7 +693,9 @@ class ProxyHandler(tornado.web.RequestHandler):
                 request_timeout=REQUEST_TIMEOUT,
                 allow_nonstandard_methods=True,
                 streaming_callback=handle_data_chunk,
-                header_callback=parse_helper.handle_header_line)
+                header_callback=parse_helper.handle_header_line,
+                decompress_response=False,
+            )
         except tornado.httpclient.HTTPError as e:
             if hasattr(e, 'response') and e.response:
                 handle_response(e.response)
