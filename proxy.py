@@ -44,9 +44,14 @@ import tornado.iostream
 import tornado.web
 import tornado.httpclient
 import tornado.httputil
+import zlib
 
 REQUEST_TIMEOUT = 3600.0
 MAX_BODY_SIZE = 2 * 1024 * 1024 * 1024
+
+CACHE_EXCLUDE_PATTERNS = []
+
+ALWAYS_SERVE_ENCODED_GZIP = []
 
 META_JSON = "meta.json"
 
@@ -303,7 +308,7 @@ class ProxyBackend(object):
             body_data_filename = os.path.join(local_dir, "body")
 
             headers = FakeHeaders(metadata["headers"])
-            if "Content-length" in headers:
+            if "Content-length" in headers and ("X-Consumed-Content-Encoding" not in headers or headers["X-Consumed-Content-Encoding"] != "gzip"):
                 content_length_str = headers["Content-length"]
                 if content_length_str is not None:
                     if get_size(body_data_filename) != int(content_length_str):
@@ -535,6 +540,9 @@ def calc_sha1(data):
 
 
 class ProxyHandler(tornado.web.RequestHandler):
+    def __init__(self, *args, **kwargs):
+        super(ProxyHandler, self).__init__(*args, **kwargs)
+        self.get_count = 0
 
     SUPPORTED_METHODS = ['GET', 'POST', 'CONNECT']
 
@@ -547,23 +555,46 @@ class ProxyHandler(tornado.web.RequestHandler):
 
     @tornado.web.asynchronous
     def get(self):
-        print 'CLIENT REQUEST %s %s' % (self.request.method, self.request.uri)
+        cur_get_num = self.get_count
+        # self.request.cur_get_num = cur_get_num
+        self.get_count += 1
+
+        def getlog(msg):
+            print "%s.get() #%d %s" % (self, cur_get_num, msg)
+
+        getlog("begins")
+        getlog('CLIENT REQUEST %s %s' % (self.request.method, self.request.uri))
+
+        gzip_encode_response = any(pattern in self.request.uri for pattern in ALWAYS_SERVE_ENCODED_GZIP)
+        compressor = None
+        if gzip_encode_response:
+            getlog("gzip encoding response")
+            compressor = zlib.compressobj()
+
+        def is_cachable_request():
+            is_range_request = "Range" in self.request.headers
+            if is_range_request:
+                getlog('RANGE REQUEST %s %s %s' % (self.request.method, self.request.uri, self.request.headers["Range"]))
+            return self.request.method == "GET" and \
+                self.request.body == "" and \
+                not is_range_request
 
         def handle_headers_done():
-            print "UPSTREAM RESPONSE %s %s %s %s" % (self.request.method, self.request.uri, parse_helper.code, parse_helper.reason)
-            if self.request.method == "GET" and self.request.body == "" and 200 <= parse_helper.code < 300:
-                print "Saving stream %s %s %s" % (self.request.method, parse_helper.code, self.request.uri)
+            getlog("headers done")
+            getlog("UPSTREAM RESPONSE %s %s %s %s" % (self.request.method, self.request.uri, parse_helper.code, parse_helper.reason))
+            if is_cachable_request() and 200 <= parse_helper.code < 300:
+                getlog("Saving stream %s %s %s" % (self.request.method, parse_helper.code, self.request.uri))
                 parse_helper.write_handle = _proxy_backend.save_url_handle(self.request.uri, parse_helper.code, parse_helper.error, parse_helper.reason, parse_helper.headers)
-            elif self.request.method == "GET" and self.request.body == "" and parse_helper.code == 301:
+            elif is_cachable_request() and parse_helper.code == 301:
                 new_url = parse_helper.headers.get("Location")
-                print "Skipping saving stream %s %s %s to %s %s" % (self.request.method, parse_helper.code, parse_helper.reason, new_url, self.request.uri)
+                getlog("Skipping saving stream %s %s %s to %s %s" % (self.request.method, parse_helper.code, parse_helper.reason, new_url, self.request.uri))
             else:
-                print "Skipping saving stream %s %s %s" % (self.request.method, parse_helper.code, self.request.uri)
+                getlog("Skipping saving stream %s %s %s" % (self.request.method, parse_helper.code, self.request.uri))
 
             if converted_request_to_conditional and parse_helper.code == 304:
                 # We converted a request to conditional and found our cache was up to date
                 # so serve the original cache-based response
-                print "Conditional request passed"
+                getlog("Conditional request passed")
                 handle_response(cache_response, loaded_from_cache=True)
                 return
 
@@ -571,8 +602,13 @@ class ProxyHandler(tornado.web.RequestHandler):
             self._headers = tornado.httputil.HTTPHeaders()  # clear tornado default header
 
             for header, v in parse_helper.headers.get_all():
-                if header not in ('Content-Length', 'Transfer-Encoding', 'Content-Encoding', 'Connection'):
+                if header in ('Content-Length', 'Transfer-Encoding', 'Content-Encoding', 'Connection'):
+                    getlog("Skipping header %s: %s" % (header, v))
+                else:
                     self.add_header(header, v)  # some header appear multiple times, eg 'Set-Cookie'
+
+            if gzip_encode_response:
+                self.add_header("Content-Encoding", "gzip")
 
             # if response.body:
             #     self.set_header('Content-Length', len(response.body))
@@ -583,11 +619,16 @@ class ProxyHandler(tornado.web.RequestHandler):
         parse_helper = ParseHelper(handle_headers_done, debug_sizes=debug_sizes)
 
         def handle_data_chunk(data):
-            self.write(data)
+            if gzip_encode_response:
+                data_to_send = compressor.compress(data)
+            else:
+                data_to_send = data
+            self.write(data_to_send)
             self.flush()
             parse_helper.handle_data_chunk(data)
 
         def handle_response(response, loaded_from_cache=False):
+            getlog("handle_response")
             if parse_helper.response_handled:
                 return
             parse_helper.response_handled = True
@@ -613,23 +654,31 @@ class ProxyHandler(tornado.web.RequestHandler):
                         self.add_header(header, v)  # some header appear multiple times, eg 'Set-Cookie'
 
                 if response.body:
-                    self.set_header('Content-Length', len(response.body))
-                    self.write(response.body)
-            elif response.error and 400 <= response.code < 600:
+                    data_to_send = response.body
+                    if gzip_encode_response:
+                        self.add_header("Content-Encoding", "gzip")
+                        data_to_send = compressor.compress(data_to_send) + compressor.flush()
+                    self.set_header('Content-Length', len(data_to_send))
+                    self.write(data_to_send)
+            elif is_cachable_request() and response.error and 400 <= response.code < 600:
                 assert not loaded_from_cache
                 url = self.request.uri
                 print "%s: Error during serving of uncached content: %s" % (url, response.error)
-            else:
+            elif is_cachable_request():
                 assert not loaded_from_cache
                 if "Content-Length" in response.headers:
                     content_length = int(response.headers["Content-Length"])
-                    print "%s content-length %d" % (self.request.uri, content_length)
+                    getlog("%s content-length %d" % (self.request.uri, content_length))
                     if parse_helper.body_size != content_length:
-                        print "WARNING content length mismatch %d %d" % (parse_helper.body_size, content_length)
+                        print "WARNING content length mismatch got body bytes %d expected content-length %d" % (parse_helper.body_size, content_length)
                 url = self.request.uri
                 if url in _proxy_backend.downloads_in_progress_with_metadata:
                     metadata = _proxy_backend.save_current_download_metadata(url)
                     _proxy_backend.notify_peers_about_new_content(url, metadata)
+
+            if gzip_encode_response and not loaded_from_cache:
+                getlog("blockwise gzip flushing")
+                self.write(compressor.flush())
 
             self.finish()
 
@@ -640,7 +689,7 @@ class ProxyHandler(tornado.web.RequestHandler):
         cache_response = None
         converted_request_to_conditional = False
 
-        if self.request.method == "GET" and self.request.body == "":
+        if is_cachable_request():
 
             should_check_cache = True
 
@@ -654,6 +703,9 @@ class ProxyHandler(tornado.web.RequestHandler):
                 print "IMS", headers.get("If-Modified-Since"), "INM", headers.get("If-None-Match")
                 # always put these through since upstream could have a newer version
                 # we want and if it doesn't it is already doing data reduction
+                should_check_cache = False
+
+            if any(pattern in self.request.uri for pattern in CACHE_EXCLUDE_PATTERNS):
                 should_check_cache = False
 
             if should_check_cache:
@@ -703,6 +755,8 @@ class ProxyHandler(tornado.web.RequestHandler):
                 self.set_status(500)
                 self.write('Internal server error:\n' + str(e))
                 self.finish()
+
+        getlog("ends")
 
     @tornado.web.asynchronous
     def post(self):
