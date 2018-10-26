@@ -46,6 +46,8 @@ import tornado.httpclient
 import tornado.httputil
 import zlib
 
+LAUNCH_INITIAL_SYNC_SIMULTANEOUS_DOWNLOADS = 4
+
 REQUEST_TIMEOUT = 3600.0
 MAX_BODY_SIZE = 2 * 1024 * 1024 * 1024
 
@@ -476,7 +478,7 @@ class ProxyBackend(object):
                 else:
                     print "SYNC COMPLETE"
 
-            tracker = LimitTracker(4)
+            tracker = LimitTracker(LAUNCH_INITIAL_SYNC_SIMULTANEOUS_DOWNLOADS)
             self.download_entries(ip, port, entries, after_entries, tracker)
 
         uri = uri_format % (ip, port)

@@ -11,6 +11,8 @@ import zeroconf
 from proxy import ProxyHandler, init_proxy_backend, get_proxy_backend, LimitTracker
 from utils import get_ip
 
+NOTIFY_SIMULTANEOUS_DOWNLOADS = 4
+
 
 def parse_args():
     parser = argparse.ArgumentParser()
@@ -69,7 +71,7 @@ class MeshNotifyHandler(tornado.web.RequestHandler):
 
             entry = {"url": url, "last_modified": last_modified}
 
-            tracker = LimitTracker(4)
+            tracker = LimitTracker(NOTIFY_SIMULTANEOUS_DOWNLOADS)
             backend.download_entries(proxy_ip, proxy_port, [entry], our_finish, tracker)
         else:
             our_finish()
