@@ -55,6 +55,9 @@ ALWAYS_SERVE_ENCODED_GZIP = []
 
 META_JSON = "meta.json"
 
+MAX_WRITE_CHUNK_SIZE = 1024 * 1024
+MAX_WRITE_BUFFER_SIZE = 16 * 1024 * 1024
+
 logger = logging.getLogger('tornado_proxy')
 
 __all__ = ['ProxyHandler', 'run_proxy']
@@ -118,6 +121,48 @@ class FakeResponse(object):
         self.headers = FakeHeaders(metadata["headers"])
         self.reason = metadata["reason"]
         self.body = body
+
+
+class WriteBufferFriendlyWrite(object):
+    def __init__(self, request_handler, data_to_write):
+        """
+        Write data to the given request handler, limiting the amount of
+        unflushed data at any given time, and then call finish().
+        :param request_handler: request to write the data to
+        :param data_to_write: the data to write
+        :type data_to_write: str
+        """
+        assert isinstance(request_handler, tornado.web.RequestHandler)
+        # noinspection PyProtectedMember
+        if request_handler._auto_finish:
+            raise ValueError("The request handler %r was not tagged @tornado.web.asynchronous." % request_handler)
+        self.request_handler = request_handler
+        self.data_to_write = data_to_write
+        self.offset = 0
+        self.unflushed_bytes = 0
+        self.write_in_progress = False
+        self.do_write()
+
+    def do_write(self):
+        self.write_in_progress = True
+        while self.offset < len(self.data_to_write):
+            # we treat the last chunk as a full sized chunk for buffer accounting purposes
+            # to avoid additional state for its size
+            if self.unflushed_bytes > MAX_WRITE_BUFFER_SIZE:
+                self.write_in_progress = False
+                return
+            write_size = MAX_WRITE_CHUNK_SIZE
+            chunk_data = self.data_to_write[self.offset:self.offset + write_size]
+            self.offset += write_size
+            self.unflushed_bytes += write_size
+            self.request_handler.write(chunk_data)
+            self.request_handler.flush(callback=self.flush_callback)
+        self.request_handler.finish()
+
+    def flush_callback(self):
+        self.unflushed_bytes -= MAX_WRITE_CHUNK_SIZE
+        if not self.write_in_progress:
+            self.do_write()
 
 
 class FakeHeaders(object):
@@ -659,7 +704,8 @@ class ProxyHandler(tornado.web.RequestHandler):
                         self.add_header("Content-Encoding", "gzip")
                         data_to_send = compressor.compress(data_to_send) + compressor.flush()
                     self.set_header('Content-Length', len(data_to_send))
-                    self.write(data_to_send)
+                    WriteBufferFriendlyWrite(self, data_to_send)
+                    return
             elif is_cachable_request() and response.error and 400 <= response.code < 600:
                 assert not loaded_from_cache
                 url = self.request.uri
