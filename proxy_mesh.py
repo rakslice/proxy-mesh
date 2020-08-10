@@ -17,7 +17,7 @@ NOTIFY_SIMULTANEOUS_DOWNLOADS = 4
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--port", "-p", type=int, help="TCP port to listen on", default=8000)
-    parser.add_argument("--proxy-dir", help="A place to put the proxy data")
+    parser.add_argument("--proxy-dir", help="A place to put the proxy data (default ~/proxy_mesh or %APPDATA%/proxy_mesh)")
     parser.add_argument("--rebuild-db", default=False, action="store_true", help="Rebuild the database of download metadata")
 
     return parser.parse_args()
